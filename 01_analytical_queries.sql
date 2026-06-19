@@ -63,8 +63,9 @@ ORDER BY dp.category_name, dd.year, dd.quarter;
 -- ============================================================
 
 -- Q3: Supplier on-time shipping performance
--- Calculates average days to ship and late shipment rate.
--- Critical metric for procurement SLA management.
+-- Calculates average days to ship per supplier.
+-- Note: required_date_key is NULL in this dataset (not
+-- available in mywind source); late shipment rate omitted.
 SELECT
     ds.company_name                                      AS supplier,
     COUNT(fl.order_line_key)                             AS total_lines,
@@ -73,70 +74,61 @@ SELECT
             dd_ship.full_date,
             dd_ord.full_date
         )), 1)                                           AS avg_days_to_ship,
-    SUM(CASE
-        WHEN dd_ship.full_date > dd_req.full_date THEN 1
-        ELSE 0
-    END)                                                 AS late_shipments,
-    ROUND(SUM(CASE
-        WHEN dd_ship.full_date > dd_req.full_date THEN 1
-        ELSE 0
-    END) / COUNT(fl.order_line_key) * 100, 2)           AS late_shipment_rate_pct,
     MIN(DATEDIFF(dd_ship.full_date, dd_ord.full_date))  AS min_days_to_ship,
     MAX(DATEDIFF(dd_ship.full_date, dd_ord.full_date))  AS max_days_to_ship
 FROM fact_order_lines fl
 JOIN dim_supplier     ds      ON fl.supplier_key      = ds.supplier_key
 JOIN dim_date         dd_ord  ON fl.order_date_key    = dd_ord.date_key
-JOIN dim_date         dd_req  ON fl.required_date_key = dd_req.date_key
 JOIN dim_date         dd_ship ON fl.shipped_date_key  = dd_ship.date_key
+WHERE fl.shipped_date_key IS NOT NULL
 GROUP BY ds.supplier_key, ds.company_name
-ORDER BY late_shipment_rate_pct DESC;
+ORDER BY avg_days_to_ship DESC;
 
 
 -- Q4: Products at or below reorder level by supplier
 -- Proactive reorder risk identification.
+-- Note: units_in_stock and units_on_order are not available
+-- in the mywind source dataset; reorder_level shown for
+-- reference against order volume.
 SELECT
-    ds.company_name      AS supplier,
+    ds.company_name                          AS supplier,
     dp.product_name,
-    dp.units_in_stock,
-    dp.reorder_level,
-    dp.units_on_order,
-    dp.units_in_stock - dp.reorder_level  AS stock_vs_reorder,
-    CASE
-        WHEN dp.units_in_stock = 0           THEN 'OUT OF STOCK'
-        WHEN dp.units_in_stock
-             < dp.reorder_level             THEN 'BELOW REORDER LEVEL'
-        WHEN dp.units_in_stock
-             = dp.reorder_level             THEN 'AT REORDER LEVEL'
-        ELSE 'OK'
-    END                                   AS stock_status
-FROM dim_product dp
-JOIN dim_supplier ds ON dp.supplier_key = ds.supplier_key
-WHERE dp.discontinued = 0
-  AND dp.units_in_stock <= dp.reorder_level
-ORDER BY stock_vs_reorder ASC, ds.company_name;
-
-
--- ============================================================
--- SECTION 3: DISCOUNT & MARGIN ANALYSIS
--- ============================================================
-
--- Q5: Discount impact by product and category
--- Quantifies revenue leakage from discounting.
-SELECT
     dp.category_name,
+    dp.reorder_level,
+    COUNT(fl.order_line_key)                 AS times_ordered,
+    SUM(fl.quantity)                         AS total_units_ordered
+FROM dim_product dp
+JOIN dim_supplier      ds ON dp.supplier_key  = ds.supplier_key
+LEFT JOIN fact_order_lines fl ON dp.product_key = fl.product_key
+WHERE dp.discontinued = 0
+GROUP BY dp.product_key, dp.product_name, dp.category_name,
+         ds.company_name, dp.reorder_level
+ORDER BY total_units_ordered DESC;
+
+
+-- ============================================================
+-- SECTION 3: PRODUCT REVENUE ANALYSIS
+-- ============================================================
+
+-- Q5: Top 10 products by net revenue with supplier context
+-- Identifies highest-revenue products and their suppliers.
+-- Supports category management and supplier prioritization.
+-- Note: mywind dataset contains no discount data;
+-- gross_amount equals net_amount across all records.
+SELECT
     dp.product_name,
-    COUNT(fl.order_line_key)                             AS times_ordered,
-    SUM(fl.gross_amount)                                 AS gross_revenue,
-    SUM(fl.net_amount)                                   AS net_revenue,
-    SUM(fl.gross_amount) - SUM(fl.net_amount)           AS discount_value_lost,
-    ROUND((SUM(fl.gross_amount) - SUM(fl.net_amount)) /
-          SUM(fl.gross_amount) * 100, 2)                AS effective_discount_rate_pct,
-    ROUND(AVG(fl.discount) * 100, 2)                    AS avg_discount_pct
+    dp.category_name,
+    ds.company_name                          AS supplier,
+    COUNT(fl.order_line_key)                 AS times_ordered,
+    SUM(fl.quantity)                         AS total_units,
+    ROUND(SUM(fl.net_amount), 2)             AS total_revenue,
+    ROUND(AVG(fl.unit_price), 2)             AS avg_unit_price
 FROM fact_order_lines fl
-JOIN dim_product       dp ON fl.product_key = dp.product_key
-WHERE fl.discount > 0
-GROUP BY dp.category_name, dp.product_name
-ORDER BY discount_value_lost DESC;
+JOIN dim_product  dp ON fl.product_key  = dp.product_key
+JOIN dim_supplier ds ON fl.supplier_key = ds.supplier_key
+GROUP BY dp.product_key, dp.product_name, dp.category_name, ds.company_name
+ORDER BY total_revenue DESC
+LIMIT 10;
 
 
 -- ============================================================
