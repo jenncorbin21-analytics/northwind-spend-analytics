@@ -24,27 +24,26 @@ INSERT INTO fact_order_lines (
     freight
 )
 SELECT
-    o.OrderID,
+    o.id,
     dp.product_key,
     dc.customer_key,
     de.employee_key,
     ds.supplier_key,
     dsh.shipper_key,
-    -- Date keys: cast to YYYYMMDD integer
-    CAST(DATE_FORMAT(o.OrderDate,    '%Y%m%d') AS UNSIGNED) AS order_date_key,
-    CAST(DATE_FORMAT(o.RequiredDate, '%Y%m%d') AS UNSIGNED) AS required_date_key,
-    CAST(DATE_FORMAT(o.ShippedDate,  '%Y%m%d') AS UNSIGNED) AS shipped_date_key,
-    o.OrderID                                               AS order_id_dd,
-    od.UnitPrice,
-    od.Quantity,
-    od.Discount,
-    o.Freight
-FROM [Order Details] od                          -- Northwind bracket-escaped name
-JOIN Orders           o   ON od.OrderID    = o.OrderID
-JOIN dim_product      dp  ON od.ProductID  = dp.product_id
-JOIN dim_customer     dc  ON o.CustomerID  = dc.customer_id
-JOIN dim_employee     de  ON o.EmployeeID  = de.employee_id
-JOIN dim_supplier     ds  ON dp.supplier_key = ds.supplier_key
-JOIN dim_shipper      dsh ON o.ShipVia     = dsh.shipper_id
+    CAST(DATE_FORMAT(o.order_date,   '%Y%m%d') AS UNSIGNED) AS order_date_key,
+    NULL                                                     AS required_date_key,
+    CAST(DATE_FORMAT(o.shipped_date, '%Y%m%d') AS UNSIGNED) AS shipped_date_key,
+    o.id                                                     AS order_id_dd,
+    od.unit_price,
+    od.quantity,
+    od.discount,
+    o.shipping_fee
+FROM northwind.order_details od
+JOIN northwind.orders        o   ON od.order_id    = o.id
+JOIN dim_product             dp  ON od.product_id  = dp.product_id
+JOIN dim_customer            dc  ON o.customer_id  = dc.customer_id
+JOIN dim_employee            de  ON o.employee_id  = de.employee_id
+JOIN dim_supplier            ds  ON dp.supplier_key = ds.supplier_key
+LEFT JOIN dim_shipper        dsh ON o.shipper_id   = dsh.shipper_id
 -- Only load dates that exist in dim_date (safety guard)
-WHERE DATE_FORMAT(o.OrderDate, '%Y%m%d') IN (SELECT date_key FROM dim_date);
+WHERE DATE_FORMAT(o.order_date, '%Y%m%d') IN (SELECT date_key FROM dim_date);
